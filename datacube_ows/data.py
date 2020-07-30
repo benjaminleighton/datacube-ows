@@ -114,10 +114,10 @@ class DataStacker(object):
         # datasets is an XArray DataArray of datasets grouped by time.
         if mask:
             prod = self._product.pq_product
-            measurements = [prod.measurements[self._product.pq_band].copy()]
+            measurements = prod.lookup_measurements([self._product.pq_band])
         else:
             prod = self._product.product
-            measurements = [prod.measurements[name].copy() for name in self.needed_bands()]
+            measurements = prod.lookup_measurements(self.needed_bands())
 
         if manual_merge:
             return self.manual_data_stack(datasets, measurements, mask, skip_corrections, **kwargs)
@@ -389,10 +389,14 @@ def _write_polygon(geobox, polygon, zoom_fill):
 @log_call
 def get_s3_browser_uris(datasets, pt=None, s3url="", s3bucket=""):
     uris = []
+    last_crs = None
     for tds in datasets:
         for ds in tds.values.item():
             if pt and ds.extent:
-                if ds.extent.contains(pt):
+                if ds.crs != last_crs:
+                    pt_native = pt.to_crs(ds.crs)
+                    last_crs = ds.crs
+                if ds.extent.contains(pt_native):
                     uris.append(ds.uris)
             else:
                 uris.append(ds.uris)
@@ -592,13 +596,12 @@ def feature_info(args):
                         feature_json["data"].append(date_info)
                     pq_pixel_ds = pqd.isel(**isel_kwargs)
                     # PQ flags
-                    m = params.product.pq_product.measurements[params.product.pq_band]
                     flags = pq_pixel_ds[params.product.pq_band].item()
                     if not flags & ~params.product.info_mask:
                         my_flags = my_flags | flags
                     else:
                         continue
-                    for mk, mv in m["flags_definition"].items():
+                    for mk, mv in params.product.flags_def.items():
                         if mk in params.product.ignore_info_flags:
                             continue
                         bits = mv["bits"]
@@ -636,7 +639,7 @@ def feature_info(args):
                         feature_json["data_available_for_dates"].append(dt.strftime("%Y-%m-%d"))
                         break
             if ds_at_times:
-                feature_json["data_links"] = sorted(get_s3_browser_uris(ds_at_times, pt_native, s3_url, s3_bucket))
+                feature_json["data_links"] = sorted(get_s3_browser_uris(ds_at_times, pt, s3_url, s3_bucket))
             else:
                 feature_json["data_links"] = []
             if params.product.feature_info_include_utc_dates:

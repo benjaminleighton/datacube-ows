@@ -50,6 +50,9 @@ if os.environ.get("SENTRY_KEY") and os.environ.get("SENTRY_PROJECT"):
 app = Flask(__name__.split('.')[0])
 RequestID(app)
 
+# Parse config file
+if not os.environ.get("DEFER_CFG_PARSE"):
+    get_config()
 
 # If invoked using Gunicorn, link our root logger to the gunicorn logger
 # this will mean the root logs will be captured and managed by the gunicorn logger
@@ -62,7 +65,8 @@ if os.environ.get("prometheus_multiproc_dir", False):
     _LOG.info("Prometheus metrics enabled")
 
 if os.environ.get("AWS_DEFAULT_REGION"):
-    set_default_rio_config(aws=dict(aws_unsigned=True,
+    unsigned = bool(os.environ.get("AWS_NO_SIGN_REQUEST", "yes"))
+    set_default_rio_config(aws=dict(aws_unsigned=unsigned,
                                     region_name="auto"),
                            cloud_defaults=True)
 else:
@@ -217,11 +221,9 @@ def ogc_svc_impl(svc):
 def ogc_wms_impl():
     return ogc_svc_impl("wms")
 
-
 @app.route('/wmts')
 def ogc_wmts_impl():
     return ogc_svc_impl("wmts")
-
 
 @app.route('/wcs')
 def ogc_wcs_impl():
@@ -278,3 +280,20 @@ def log_time_and_request_response(response):
     time_taken = int((monotonic() - g.ogc_start_time) * 1000)
     _LOG.info("request: %s returned status: %d and took: %d ms", request.url, response.status_code, time_taken)
     return response
+
+
+# Note: register your default metrics after all routes have been set up.
+# Also note, that Gauge metrics registered as default will track the /metrics endpoint, and this can't be disabled at the moment.
+
+if os.environ.get("prometheus_multiproc_dir", False):
+    metrics.register_default(
+        metrics.summary(
+            'flask_ows_request_full_url', 'Request summary by request url',
+            labels={
+                'query_request': lambda: request.args.get('request'),
+                'query_service': lambda: request.args.get('service'),
+                'query_layers': lambda: request.args.get('layers'),
+                'query_url': lambda: request.full_path
+            }
+        )
+    )
